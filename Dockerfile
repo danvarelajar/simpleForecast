@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (use npm install if lock file doesn't exist)
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source files
 COPY tsconfig.json ./
@@ -24,8 +24,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install production dependencies only
-RUN npm ci --omit=dev
+# Install production dependencies only (use npm install if lock file doesn't exist)
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
