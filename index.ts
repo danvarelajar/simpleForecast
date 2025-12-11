@@ -10,6 +10,22 @@ import { z } from "zod";
 import { translateWeatherCode } from "./weatherCodes.js";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const DEBUG = process.env.DEBUG === "true" || process.env.DEBUG === "1";
+
+// Debug logging utility
+function debugLog(...args: any[]): void {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString();
+    console.log(`[DEBUG ${timestamp}]`, ...args);
+  }
+}
+
+function debugError(message: string, error: any): void {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString();
+    console.error(`[DEBUG ERROR ${timestamp}] ${message}`, error);
+  }
+}
 
 // Initialize Express app
 const app = express();
@@ -17,6 +33,7 @@ app.use(express.json());
 
 // Enable CORS for all origins
 app.use((req, res, next) => {
+  debugLog(`[CORS] ${req.method} ${req.path} from ${req.ip}`);
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
@@ -101,30 +118,36 @@ interface WeatherApiResponse {
 
 // Tool: search_location
 async function searchLocation(city: string): Promise<LocationSearchResult[]> {
+  debugLog(`[search_location] Starting search for city: "${city}"`);
   try {
-    const response = await axios.get<GeocodingResponse>(
-      `https://geocoding-api.open-meteo.com/v1/search`,
-      {
-        params: {
-          name: city,
-          count: 5,
-          language: "en",
-          format: "json",
-        },
-      }
-    );
+    const apiUrl = `https://geocoding-api.open-meteo.com/v1/search`;
+    const params = {
+      name: city,
+      count: 5,
+      language: "en",
+      format: "json",
+    };
+    debugLog(`[search_location] API Request:`, { url: apiUrl, params });
+
+    const response = await axios.get<GeocodingResponse>(apiUrl, { params });
+    debugLog(`[search_location] API Response status:`, response.status);
+    debugLog(`[search_location] API Response data:`, JSON.stringify(response.data, null, 2));
 
     if (!response.data.results || response.data.results.length === 0) {
+      debugLog(`[search_location] No results found for city: "${city}"`);
       return [];
     }
 
-    return response.data.results.map((result) => ({
+    const results = response.data.results.map((result) => ({
       name: result.name,
       country: result.country,
       lat: result.latitude,
       lon: result.longitude,
     }));
+    debugLog(`[search_location] Found ${results.length} location(s):`, results);
+    return results;
   } catch (error) {
+    debugError(`[search_location] Error searching for city: "${city}"`, error);
     throw new Error("Weather data currently unavailable");
   }
 }
@@ -138,23 +161,30 @@ async function getCompleteForecast(
   next_12_hours: any[];
   next_7_days: any[];
 }> {
+  debugLog(`[get_complete_forecast] Starting forecast request for coordinates:`, { latitude, longitude });
   try {
-    const response = await axios.get<WeatherApiResponse>(
-      `https://api.open-meteo.com/v1/forecast`,
-      {
-        params: {
-          latitude,
-          longitude,
-          current: "temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m",
-          hourly: "temperature_2m,weather_code,precipitation_probability",
-          daily: "weather_code,temperature_2m_max,temperature_2m_min",
-          timezone: "auto",
-          forecast_days: 7,
-        },
-      }
-    );
+    const apiUrl = `https://api.open-meteo.com/v1/forecast`;
+    const params = {
+      latitude,
+      longitude,
+      current: "temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m",
+      hourly: "temperature_2m,weather_code,precipitation_probability",
+      daily: "weather_code,temperature_2m_max,temperature_2m_min",
+      timezone: "auto",
+      forecast_days: 7,
+    };
+    debugLog(`[get_complete_forecast] API Request:`, { url: apiUrl, params });
+
+    const response = await axios.get<WeatherApiResponse>(apiUrl, { params });
+    debugLog(`[get_complete_forecast] API Response status:`, response.status);
+    debugLog(`[get_complete_forecast] API Response headers:`, response.headers);
 
     const { current, hourly, daily } = response.data;
+    debugLog(`[get_complete_forecast] Raw data received:`, {
+      current_time: current.time,
+      hourly_count: hourly.time.length,
+      daily_count: daily.time.length,
+    });
 
     // Process current weather
     const currentWeather = {
@@ -165,9 +195,11 @@ async function getCompleteForecast(
       humidity: current.relative_humidity_2m,
       wind_speed: current.wind_speed_10m,
     };
+    debugLog(`[get_complete_forecast] Processed current weather:`, currentWeather);
 
     // Process next 12 hours
     const now = new Date(current.time);
+    debugLog(`[get_complete_forecast] Current time: ${now.toISOString()}`);
     const next12Hours: any[] = [];
     
     for (let i = 0; i < hourly.time.length; i++) {
@@ -184,6 +216,7 @@ async function getCompleteForecast(
         });
       }
     }
+    debugLog(`[get_complete_forecast] Processed ${next12Hours.length} hours for next 12h forecast`);
 
     // Process next 7 days
     const next7Days = daily.time.slice(0, 7).map((time, index) => ({
@@ -193,19 +226,24 @@ async function getCompleteForecast(
       temperature_max: daily.temperature_2m_max[index],
       temperature_min: daily.temperature_2m_min[index],
     }));
+    debugLog(`[get_complete_forecast] Processed ${next7Days.length} days for 7-day forecast`);
 
-    return {
+    const result = {
       current: currentWeather,
       next_12_hours: next12Hours,
       next_7_days: next7Days,
     };
+    debugLog(`[get_complete_forecast] Forecast processing complete`);
+    return result;
   } catch (error) {
+    debugError(`[get_complete_forecast] Error getting forecast for coordinates:`, { latitude, longitude, error });
     throw new Error("Weather data currently unavailable");
   }
 }
 
 // Register tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  debugLog(`[MCP] ListToolsRequest received`);
   return {
     tools: [
       {
@@ -248,11 +286,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  debugLog(`[MCP] CallToolRequest received:`, { tool: name, arguments: args });
 
   try {
     if (name === "search_location") {
+      debugLog(`[MCP] Processing search_location tool`);
       const validated = SearchLocationInputSchema.parse(args);
+      debugLog(`[MCP] Validated input:`, validated);
       const results = await searchLocation(validated.city);
+      debugLog(`[MCP] search_location completed, returning ${results.length} result(s)`);
       return {
         content: [
           {
@@ -264,11 +306,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === "get_complete_forecast") {
+      debugLog(`[MCP] Processing get_complete_forecast tool`);
       const validated = GetCompleteForecastInputSchema.parse(args);
+      debugLog(`[MCP] Validated input:`, validated);
       const forecast = await getCompleteForecast(
         validated.latitude,
         validated.longitude
       );
+      debugLog(`[MCP] get_complete_forecast completed successfully`);
       return {
         content: [
           {
@@ -279,9 +324,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
+    debugLog(`[MCP] Unknown tool requested: ${name}`);
     throw new Error(`Unknown tool: ${name}`);
   } catch (error) {
     if (error instanceof z.ZodError) {
+      debugError(`[MCP] Validation error for tool ${name}:`, error.errors);
       return {
         content: [
           {
@@ -295,6 +342,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     const errorMessage =
       error instanceof Error ? error.message : "Weather data currently unavailable";
+    debugError(`[MCP] Error processing tool ${name}:`, error);
 
     return {
       content: [
@@ -313,6 +361,7 @@ const activeTransports = new Map<string, SSEServerTransport>();
 
 // SSE endpoint
 app.get("/sse", async (req: Request, res: Response) => {
+  debugLog(`[SSE] New SSE connection request from ${req.ip}`);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -320,34 +369,47 @@ app.get("/sse", async (req: Request, res: Response) => {
   const transport = new SSEServerTransport("/messages", res);
   const transportId = `${Date.now()}-${Math.random()}`;
   activeTransports.set(transportId, transport);
+  debugLog(`[SSE] SSE connection established, transport ID: ${transportId}, active transports: ${activeTransports.size}`);
 
   res.on("close", () => {
     activeTransports.delete(transportId);
+    debugLog(`[SSE] SSE connection closed, transport ID: ${transportId}, remaining transports: ${activeTransports.size}`);
+  });
+
+  res.on("error", (error) => {
+    debugError(`[SSE] SSE connection error for transport ${transportId}:`, error);
   });
 
   await server.connect(transport);
+  debugLog(`[SSE] MCP server connected to transport ${transportId}`);
 });
 
 // Messages endpoint for POST requests
 app.post("/messages", async (req: Request, res: Response) => {
+  debugLog(`[POST /messages] Received message from ${req.ip}`, { body: req.body, headers: req.headers });
   try {
     // Find the appropriate transport (in a real scenario, you'd match by session ID)
     // For simplicity, we'll use the first active transport or create a new one
     const transport = activeTransports.values().next().value;
+    debugLog(`[POST /messages] Active transports: ${activeTransports.size}`);
     
     if (transport) {
       // The transport will handle the message through the server
+      debugLog(`[POST /messages] Message forwarded to transport`);
       res.json({ status: "ok" });
     } else {
+      debugLog(`[POST /messages] No active SSE connection found`);
       res.status(400).json({ error: "No active SSE connection" });
     }
   } catch (error) {
+    debugError(`[POST /messages] Error processing message:`, error);
     res.status(500).json({ error: "Weather data currently unavailable" });
   }
 });
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
+  debugLog(`[HEALTH] Health check requested from ${req.ip}`);
   res.json({ status: "ok" });
 });
 
@@ -356,5 +418,9 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Weather Forecast MCP Server running on port ${PORT}`);
   console.log(`SSE endpoint: http://0.0.0.0:${PORT}/sse`);
   console.log(`Messages endpoint: http://0.0.0.0:${PORT}/messages`);
+  console.log(`Debug mode: ${DEBUG ? "ENABLED" : "DISABLED"}`);
+  if (DEBUG) {
+    console.log(`[DEBUG] Debug logging is active - all operations will be logged`);
+  }
 });
 

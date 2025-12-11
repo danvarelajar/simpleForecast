@@ -46,7 +46,32 @@ You can customize the port by setting the `PORT` environment variable:
 PORT=8080 docker-compose up -d
 ```
 
-Or modify the `docker-compose.yml` file to change the default port mapping.
+#### Debug Mode
+
+Enable detailed debug logging for troubleshooting LLM integrations:
+
+```bash
+DEBUG=true docker-compose up -d
+```
+
+Or set it in `docker-compose.yml`:
+```yaml
+environment:
+  - DEBUG=true
+```
+
+When debug mode is enabled, the server will log:
+- All incoming requests (SSE, POST, GET)
+- Tool calls and their arguments
+- API requests and responses
+- Data processing steps
+- Errors with full stack traces
+- Connection lifecycle events
+
+View debug logs:
+```bash
+docker-compose logs -f
+```
 
 ## Development
 
