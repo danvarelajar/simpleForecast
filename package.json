@@ -1,0 +1,32 @@
+{
+  "name": "weather-forecast-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Open-Meteo weather data",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "weather",
+    "open-meteo"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.7",
+    "express": "^4.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}
+
