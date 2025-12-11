@@ -62,6 +62,14 @@ interface GeocodingResponse {
   results?: GeocodingResult[];
 }
 
+// Location search result (what we return from searchLocation)
+interface LocationSearchResult {
+  name: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
 // Weather API response types
 interface CurrentWeather {
   time: string;
@@ -92,7 +100,7 @@ interface WeatherApiResponse {
 }
 
 // Tool: search_location
-async function searchLocation(city: string): Promise<GeocodingResult[]> {
+async function searchLocation(city: string): Promise<LocationSearchResult[]> {
   try {
     const response = await axios.get<GeocodingResponse>(
       `https://geocoding-api.open-meteo.com/v1/search`,
