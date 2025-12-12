@@ -46,6 +46,14 @@ You can customize the port by setting the `PORT` environment variable:
 PORT=8080 docker-compose up -d
 ```
 
+#### Using `.env` (recommended)
+
+Docker Compose automatically reads a local `.env`. This repo includes `.env.example`.
+
+```bash
+cp .env.example .env
+```
+
 #### Debug Mode
 
 Enable detailed debug logging for troubleshooting LLM integrations:
