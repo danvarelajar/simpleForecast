@@ -44,7 +44,7 @@ function requireApiKey(req: Request, res: Response, next: () => void): void {
       `[AUTH] REQUIRE_API_KEY is enabled but MCP_API_KEY is not set. Rejecting request.`,
       { path: req.path, method: req.method }
     );
-    res.status(500).json({ error: "Server misconfigured (missing MCP_API_KEY)" });
+    res.status(500).type("text/plain").send("Server misconfigured (missing MCP_API_KEY)");
     return;
   }
 
@@ -56,7 +56,7 @@ function requireApiKey(req: Request, res: Response, next: () => void): void {
       ip: req.ip,
       hasKey: Boolean(provided),
     });
-    res.status(401).json({ error: "Unauthorized" });
+    res.status(401).type("text/plain").send("unauthorized");
     return;
   }
 
@@ -72,7 +72,7 @@ app.use((req, res, next) => {
   debugLog(`[CORS] ${req.method} ${req.path} from ${req.ip}`);
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Api-Key");
   if (req.method === "OPTIONS") {
     res.sendStatus(200);
     return;
@@ -398,45 +398,57 @@ const activeTransports = new Map<string, SSEServerTransport>();
 // SSE endpoint
 app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
   debugLog(`[SSE] New SSE connection request from ${req.ip}`);
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
   const transport = new SSEServerTransport("/messages", res);
-  const transportId = `${Date.now()}-${Math.random()}`;
-  activeTransports.set(transportId, transport);
-  debugLog(`[SSE] SSE connection established, transport ID: ${transportId}, active transports: ${activeTransports.size}`);
+  const sessionId = transport.sessionId;
+  activeTransports.set(sessionId, transport);
+  debugLog(
+    `[SSE] SSE connection established, sessionId: ${sessionId}, active transports: ${activeTransports.size}`
+  );
 
+  // Cleanup when the SSE connection closes.
   res.on("close", () => {
-    activeTransports.delete(transportId);
-    debugLog(`[SSE] SSE connection closed, transport ID: ${transportId}, remaining transports: ${activeTransports.size}`);
+    activeTransports.delete(sessionId);
+    debugLog(
+      `[SSE] SSE connection closed, sessionId: ${sessionId}, remaining transports: ${activeTransports.size}`
+    );
   });
 
   res.on("error", (error) => {
-    debugError(`[SSE] SSE connection error for transport ${transportId}:`, error);
+    debugError(`[SSE] SSE connection error for sessionId ${sessionId}:`, error);
   });
 
-  await server.connect(transport);
-  debugLog(`[SSE] MCP server connected to transport ${transportId}`);
+  await server.connect(transport); // connect() calls transport.start() internally
+  debugLog(`[SSE] MCP server connected to sessionId ${sessionId}`);
 });
 
 // Messages endpoint for POST requests
 app.post("/messages", requireApiKey, async (req: Request, res: Response) => {
-  debugLog(`[POST /messages] Received message from ${req.ip}`, { body: req.body, headers: req.headers });
+  const sessionId =
+    typeof req.query.sessionId === "string" ? req.query.sessionId : undefined;
+  debugLog(`[POST /messages] Received message from ${req.ip}`, {
+    sessionId,
+    body: req.body,
+    headers: req.headers,
+  });
   try {
-    // Find the appropriate transport (in a real scenario, you'd match by session ID)
-    // For simplicity, we'll use the first active transport or create a new one
-    const transport = activeTransports.values().next().value;
-    debugLog(`[POST /messages] Active transports: ${activeTransports.size}`);
-    
-    if (transport) {
-      // The transport will handle the message through the server
-      debugLog(`[POST /messages] Message forwarded to transport`);
-      res.json({ status: "ok" });
-    } else {
-      debugLog(`[POST /messages] No active SSE connection found`);
-      res.status(400).json({ error: "No active SSE connection" });
+    if (!sessionId) {
+      debugLog(`[POST /messages] Missing sessionId query param`);
+      res.status(400).type("text/plain").send("Missing sessionId");
+      return;
     }
+
+    const transport = activeTransports.get(sessionId);
+    debugLog(`[POST /messages] Active transports: ${activeTransports.size}`);
+
+    if (!transport) {
+      debugLog(`[POST /messages] Unknown sessionId: ${sessionId}`);
+      res.status(404).type("text/plain").send("Unknown sessionId");
+      return;
+    }
+
+    // NOTE: express.json() already parsed the body; pass it to avoid re-reading the stream.
+    await transport.handlePostMessage(req, res, req.body);
+    debugLog(`[POST /messages] Message accepted for sessionId ${sessionId}`);
   } catch (error) {
     debugError(`[POST /messages] Error processing message:`, error);
     res.status(500).json({ error: "Weather data currently unavailable" });
