@@ -73,6 +73,21 @@ View debug logs:
 docker-compose logs -f
 ```
 
+#### API Key (X-Api-Key)
+
+You can optionally require an API key for MCP endpoints (`/sse` and `/messages`).
+
+- **Enable**:
+
+```bash
+REQUIRE_API_KEY=true MCP_API_KEY="your-secret" docker-compose up -d
+```
+
+- **Client header**:
+  - Send `X-Api-Key: your-secret`
+
+If `REQUIRE_API_KEY=true` and `MCP_API_KEY` is not set, the server will **fail closed** and return a 500 with a misconfiguration message.
+
 ## Development
 
 ### Local Development (without Docker)

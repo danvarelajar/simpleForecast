@@ -11,6 +11,9 @@ import { translateWeatherCode } from "./weatherCodes.js";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DEBUG = process.env.DEBUG === "true" || process.env.DEBUG === "1";
+const MCP_API_KEY = process.env.MCP_API_KEY;
+const REQUIRE_API_KEY =
+  process.env.REQUIRE_API_KEY === "true" || process.env.REQUIRE_API_KEY === "1";
 
 // Debug logging utility
 function debugLog(...args: any[]): void {
@@ -25,6 +28,39 @@ function debugError(message: string, error: any): void {
     const timestamp = new Date().toISOString();
     console.error(`[DEBUG ERROR ${timestamp}] ${message}`, error);
   }
+}
+
+function getClientApiKey(req: Request): string | undefined {
+  const raw = req.header("x-api-key") ?? req.header("X-Api-Key");
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
+function requireApiKey(req: Request, res: Response, next: () => void): void {
+  if (!REQUIRE_API_KEY) return next();
+
+  // If REQUIRE_API_KEY is enabled but no key is configured, fail closed.
+  if (!MCP_API_KEY) {
+    debugError(
+      `[AUTH] REQUIRE_API_KEY is enabled but MCP_API_KEY is not set. Rejecting request.`,
+      { path: req.path, method: req.method }
+    );
+    res.status(500).json({ error: "Server misconfigured (missing MCP_API_KEY)" });
+    return;
+  }
+
+  const provided = getClientApiKey(req);
+  if (!provided || provided !== MCP_API_KEY) {
+    debugLog(`[AUTH] Unauthorized request`, {
+      method: req.method,
+      path: req.path,
+      ip: req.ip,
+      hasKey: Boolean(provided),
+    });
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  next();
 }
 
 // Initialize Express app
@@ -360,7 +396,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 const activeTransports = new Map<string, SSEServerTransport>();
 
 // SSE endpoint
-app.get("/sse", async (req: Request, res: Response) => {
+app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
   debugLog(`[SSE] New SSE connection request from ${req.ip}`);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -385,7 +421,7 @@ app.get("/sse", async (req: Request, res: Response) => {
 });
 
 // Messages endpoint for POST requests
-app.post("/messages", async (req: Request, res: Response) => {
+app.post("/messages", requireApiKey, async (req: Request, res: Response) => {
   debugLog(`[POST /messages] Received message from ${req.ip}`, { body: req.body, headers: req.headers });
   try {
     // Find the appropriate transport (in a real scenario, you'd match by session ID)
@@ -419,6 +455,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`SSE endpoint: http://0.0.0.0:${PORT}/sse`);
   console.log(`Messages endpoint: http://0.0.0.0:${PORT}/messages`);
   console.log(`Debug mode: ${DEBUG ? "ENABLED" : "DISABLED"}`);
+  console.log(`API key required: ${REQUIRE_API_KEY ? "YES" : "NO"}`);
   if (DEBUG) {
     console.log(`[DEBUG] Debug logging is active - all operations will be logged`);
   }
