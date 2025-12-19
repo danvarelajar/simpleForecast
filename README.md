@@ -54,6 +54,8 @@ Docker Compose automatically reads a local `.env`. This repo includes `.env.exam
 cp .env.example .env
 ```
 
+Note: `env_file: .env` controls what environment variables get injected **into the container**. If you also set the same variables under `environment:`, those values will **override** what’s in `env_file`.
+
 #### Debug Mode
 
 Enable detailed debug logging for troubleshooting LLM integrations:
