@@ -81,17 +81,136 @@ app.use((req, res, next) => {
 });
 
 // Initialize MCP Server
-const server = new Server(
-  {
-    name: "weather-forecast-mcp-server",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
+function createMcpServer(): Server {
+  const server = new Server(
+    {
+      name: "weather-forecast-mcp-server",
+      version: "1.0.0",
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  // Register tool handlers (per-connection server instance)
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    debugLog(`[MCP] ListToolsRequest received`);
+    return {
+      tools: [
+        {
+          name: "search_location",
+          description:
+            "Search for locations by city name. Returns up to 5 matching locations with their coordinates.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              city: {
+                type: "string",
+                description: "The city name to search for",
+              },
+            },
+            required: ["city"],
+          },
+        },
+        {
+          name: "get_complete_forecast",
+          description:
+            "Get complete weather forecast including current conditions, next 12 hours, and next 7 days for a specific location.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              latitude: {
+                type: "number",
+                description: "Latitude coordinate (-90 to 90)",
+              },
+              longitude: {
+                type: "number",
+                description: "Longitude coordinate (-180 to 180)",
+              },
+            },
+            required: ["latitude", "longitude"],
+          },
+        },
+      ],
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    debugLog(`[MCP] CallToolRequest received:`, { tool: name, arguments: args });
+
+    try {
+      if (name === "search_location") {
+        debugLog(`[MCP] Processing search_location tool`);
+        const validated = SearchLocationInputSchema.parse(args);
+        debugLog(`[MCP] Validated input:`, validated);
+        const results = await searchLocation(validated.city);
+        debugLog(`[MCP] search_location completed, returning ${results.length} result(s)`);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(results, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (name === "get_complete_forecast") {
+        debugLog(`[MCP] Processing get_complete_forecast tool`);
+        const validated = GetCompleteForecastInputSchema.parse(args);
+        debugLog(`[MCP] Validated input:`, validated);
+        const forecast = await getCompleteForecast(
+          validated.latitude,
+          validated.longitude
+        );
+        debugLog(`[MCP] get_complete_forecast completed successfully`);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(forecast, null, 2),
+            },
+          ],
+        };
+      }
+
+      debugLog(`[MCP] Unknown tool requested: ${name}`);
+      throw new Error(`Unknown tool: ${name}`);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        debugError(`[MCP] Validation error for tool ${name}:`, error.errors);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Invalid input: ${error.errors.map((e) => e.message).join(", ")}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const errorMessage =
+        error instanceof Error ? error.message : "Weather data currently unavailable";
+      debugError(`[MCP] Error processing tool ${name}:`, error);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: errorMessage,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+
+  return server;
+}
 
 // Zod schemas for tool inputs
 const SearchLocationInputSchema = z.object({
@@ -277,123 +396,9 @@ async function getCompleteForecast(
   }
 }
 
-// Register tool handlers
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  debugLog(`[MCP] ListToolsRequest received`);
-  return {
-    tools: [
-      {
-        name: "search_location",
-        description:
-          "Search for locations by city name. Returns up to 5 matching locations with their coordinates.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            city: {
-              type: "string",
-              description: "The city name to search for",
-            },
-          },
-          required: ["city"],
-        },
-      },
-      {
-        name: "get_complete_forecast",
-        description:
-          "Get complete weather forecast including current conditions, next 12 hours, and next 7 days for a specific location.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            latitude: {
-              type: "number",
-              description: "Latitude coordinate (-90 to 90)",
-            },
-            longitude: {
-              type: "number",
-              description: "Longitude coordinate (-180 to 180)",
-            },
-          },
-          required: ["latitude", "longitude"],
-        },
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  debugLog(`[MCP] CallToolRequest received:`, { tool: name, arguments: args });
-
-  try {
-    if (name === "search_location") {
-      debugLog(`[MCP] Processing search_location tool`);
-      const validated = SearchLocationInputSchema.parse(args);
-      debugLog(`[MCP] Validated input:`, validated);
-      const results = await searchLocation(validated.city);
-      debugLog(`[MCP] search_location completed, returning ${results.length} result(s)`);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(results, null, 2),
-          },
-        ],
-      };
-    }
-
-    if (name === "get_complete_forecast") {
-      debugLog(`[MCP] Processing get_complete_forecast tool`);
-      const validated = GetCompleteForecastInputSchema.parse(args);
-      debugLog(`[MCP] Validated input:`, validated);
-      const forecast = await getCompleteForecast(
-        validated.latitude,
-        validated.longitude
-      );
-      debugLog(`[MCP] get_complete_forecast completed successfully`);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(forecast, null, 2),
-          },
-        ],
-      };
-    }
-
-    debugLog(`[MCP] Unknown tool requested: ${name}`);
-    throw new Error(`Unknown tool: ${name}`);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      debugError(`[MCP] Validation error for tool ${name}:`, error.errors);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Invalid input: ${error.errors.map((e) => e.message).join(", ")}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const errorMessage =
-      error instanceof Error ? error.message : "Weather data currently unavailable";
-    debugError(`[MCP] Error processing tool ${name}:`, error);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: errorMessage,
-        },
-      ],
-      isError: true,
-    };
-  }
-});
-
 // Store active transports
 const activeTransports = new Map<string, SSEServerTransport>();
+const activeServers = new Map<string, Server>();
 
 // SSE endpoint
 app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
@@ -401,6 +406,8 @@ app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
   const transport = new SSEServerTransport("/messages", res);
   const sessionId = transport.sessionId;
   activeTransports.set(sessionId, transport);
+  const sessionServer = createMcpServer();
+  activeServers.set(sessionId, sessionServer);
   debugLog(
     `[SSE] SSE connection established, sessionId: ${sessionId}, active transports: ${activeTransports.size}`
   );
@@ -418,6 +425,7 @@ app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
   // Cleanup when the SSE connection closes.
   res.on("close", () => {
     activeTransports.delete(sessionId);
+    activeServers.delete(sessionId);
     debugLog(
       `[SSE] SSE connection closed, sessionId: ${sessionId}, remaining transports: ${activeTransports.size}`
     );
@@ -427,7 +435,7 @@ app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
     debugError(`[SSE] SSE connection error for sessionId ${sessionId}:`, error);
   });
 
-  await server.connect(transport); // connect() calls transport.start() internally
+  await sessionServer.connect(transport); // connect() calls transport.start() internally
   debugLog(`[SSE] MCP server connected to sessionId ${sessionId}`);
 });
 
@@ -452,6 +460,12 @@ app.post("/messages", requireApiKey, async (req: Request, res: Response) => {
 
     if (!transport) {
       debugLog(`[POST /messages] Unknown sessionId: ${sessionId}`);
+      res.status(404).type("text/plain").send("Unknown sessionId");
+      return;
+    }
+    const sessionServer = activeServers.get(sessionId);
+    if (!sessionServer) {
+      debugLog(`[POST /messages] No server found for sessionId: ${sessionId}`);
       res.status(404).type("text/plain").send("Unknown sessionId");
       return;
     }
