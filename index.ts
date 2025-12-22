@@ -405,6 +405,16 @@ app.get("/sse", requireApiKey, async (req: Request, res: Response) => {
     `[SSE] SSE connection established, sessionId: ${sessionId}, active transports: ${activeTransports.size}`
   );
 
+  // In debug mode, log all outbound messages sent over SSE so we can verify
+  // whether responses (e.g. tools/list) are being emitted to the client.
+  if (DEBUG) {
+    const originalSend = transport.send.bind(transport);
+    transport.send = async (message: any) => {
+      debugLog(`[SSE -> client] Sending message`, { sessionId, message });
+      return await originalSend(message);
+    };
+  }
+
   // Cleanup when the SSE connection closes.
   res.on("close", () => {
     activeTransports.delete(sessionId);
